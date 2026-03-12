@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/work_order.dart';
 import '../services/api_service.dart';
+import '../services/database_service.dart';
+import '../services/sync_service.dart';
 import 'hourly_input_screen.dart';
 
 class WoListScreen extends StatefulWidget {
@@ -40,11 +42,43 @@ class _WoListScreenState extends State<WoListScreen> {
     });
     try {
       final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-      final orders =
+      final apiOrders =
           await ApiService.getWorkOrders(widget.machineId, date: today);
+      
+      // Merge with local data to ensure unsynced changes are reflected
+      final mergedOrders = <WorkOrder>[];
+      for (var wo in apiOrders) {
+        final localReports = await DatabaseService.getHourlyReportsFor(wo.id);
+        if (localReports.isNotEmpty) {
+          double localActual = localReports.fold(0, (sum, r) => sum + r.actual);
+          double localNg = localReports.fold(0, (sum, r) => sum + r.ng);
+          
+          // Trust local data if reports exist for this WO
+          mergedOrders.add(WorkOrder(
+            id: wo.id,
+            woNumber: wo.woNumber,
+            transactionNo: wo.transactionNo,
+            partNo: wo.partNo,
+            partName: wo.partName,
+            model: wo.model,
+            qtyPlanned: wo.qtyPlanned,
+            qtyActual: localActual,
+            qtyNg: localNg,
+            status: wo.status,
+            workflowStage: wo.workflowStage,
+            shift: wo.shift,
+            productionSequence: wo.productionSequence,
+            startTime: wo.startTime,
+            endTime: wo.endTime,
+          ));
+        } else {
+          mergedOrders.add(wo);
+        }
+      }
+
       if (!mounted) return;
       setState(() {
-        _orders = orders;
+        _orders = mergedOrders;
         _loading = false;
       });
     } catch (e) {
@@ -104,8 +138,14 @@ class _WoListScreenState extends State<WoListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
+    return PopScope(
+      onPopInvokedWithResult: (bool didPop, dynamic result) {
+        if (didPop) {
+          SyncService.attemptSync();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1E293B),
         title: Column(
@@ -293,9 +333,10 @@ class _WoListScreenState extends State<WoListScreen> {
                           );
                         },
                       ),
-                    ),
-    );
-  }
+      ),
+    ),
+  );
+}
 }
 
 class _InfoChip extends StatelessWidget {

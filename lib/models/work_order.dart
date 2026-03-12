@@ -33,23 +33,33 @@ class WorkOrder {
     this.endTime,
   });
 
-  factory WorkOrder.fromJson(Map<String, dynamic> json) => WorkOrder(
-        id: json['id'] as int,
-        woNumber: json['wo_number'] as String? ?? json['transaction_no'] as String? ?? '-',
-        transactionNo: json['transaction_no'] as String?,
-        partNo: json['part_no'] as String?,
-        partName: json['part_name'] as String?,
-        model: json['model'] as String?,
-        qtyPlanned: (json['qty_planned'] as num?)?.toDouble() ?? 0,
-        qtyActual: (json['qty_actual'] as num?)?.toDouble() ?? 0,
-        qtyNg: (json['qty_ng'] as num?)?.toDouble() ?? 0,
-        status: json['status'] as String? ?? 'planned',
-        workflowStage: json['workflow_stage'] as String?,
-        shift: json['shift'] as String?,
-        productionSequence: json['production_sequence'] as int?,
-        startTime: json['start_time'] as String?,
-        endTime: json['end_time'] as String?,
-      );
+  factory WorkOrder.fromJson(Map<String, dynamic> json) {
+    double parseNum(dynamic val) {
+      if (val == null) return 0;
+      if (val is num) return val.toDouble();
+      return double.tryParse(val.toString()) ?? 0;
+    }
+
+    return WorkOrder(
+      id: json['id'] is int ? json['id'] : int.tryParse(json['id'].toString()) ?? 0,
+      woNumber: (json['wo_number'] ?? json['transaction_no'] ?? '-').toString(),
+      transactionNo: json['transaction_no']?.toString(),
+      partNo: json['part_no']?.toString(),
+      partName: json['part_name']?.toString(),
+      model: json['model']?.toString(),
+      qtyPlanned: parseNum(json['qty_planned']),
+      qtyActual: parseNum(json['qty_actual']),
+      qtyNg: parseNum(json['qty_ng']),
+      status: (json['status'] ?? 'planned').toString(),
+      workflowStage: json['workflow_stage']?.toString(),
+      shift: json['shift']?.toString(),
+      productionSequence: json['production_sequence'] is int 
+          ? json['production_sequence'] 
+          : int.tryParse(json['production_sequence']?.toString() ?? ''),
+      startTime: json['start_time']?.toString(),
+      endTime: json['end_time']?.toString(),
+    );
+  }
 
   bool get isRunning => status == 'in_production';
   bool get isCompleted => status == 'completed';

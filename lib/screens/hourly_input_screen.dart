@@ -6,6 +6,7 @@ import '../models/hourly_report.dart';
 import '../models/downtime.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
+import '../services/sync_service.dart';
 
 class HourlyInputScreen extends StatefulWidget {
   final WorkOrder workOrder;
@@ -202,6 +203,9 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     slot.synced = false;
     _recalcTotals();
 
+    // Trigger immediate sync
+    SyncService.attemptSync();
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -313,7 +317,7 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Material(
-                    color: Colors.white.withValues(alpha: 0.05),
+                    color: Colors.white.withOpacity(0.05),
                     borderRadius: BorderRadius.circular(12),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(12),
@@ -446,6 +450,32 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
                 style: const TextStyle(fontSize: 11, color: Colors.white60)),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.sync, color: Color(0xFF3B82F6)),
+            onPressed: () async {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Menyinkronkan data...')),
+              );
+              final success = await SyncService.attemptSync();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(success ? 'Sync Berhasil ✓' : 'Sync Gagal ✗'),
+                    backgroundColor: success ? const Color(0xFF22C55E) : const Color(0xFFEF4444),
+                  ),
+                );
+              }
+            },
+            tooltip: 'Sinkron data sekarang',
+          ),
+          IconButton(
+            icon: const Icon(Icons.history, color: Colors.white70),
+            onPressed: () {
+              // TODO: Implement history view
+            },
+          ),
+        ],
       ),
       // FAB for downtime
       floatingActionButton: _wo.isRunning

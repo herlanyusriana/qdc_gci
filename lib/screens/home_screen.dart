@@ -3,6 +3,7 @@ import 'wo_list_screen.dart';
 import 'qdc_timer_screen.dart';
 import 'machine_select_screen.dart';
 import '../services/sync_service.dart';
+import 'downtime_report_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final int machineId;
@@ -144,26 +145,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       operatorName: widget.operatorName,
                     )),
                   ),
-                  _MenuCard(
+                   _MenuCard(
                     icon: Icons.warning_amber_rounded,
-                    label: 'Downtime',
-                    subtitle: 'Pilih WO dulu',
+                    label: 'Downtime Report',
+                    subtitle: 'Riwayat downtime hari ini',
                     color: const Color(0xFFEF4444),
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Pilih WO yang sedang berjalan, lalu catat downtime dari sana'),
-                          backgroundColor: Color(0xFFF59E0B),
-                          duration: Duration(seconds: 3),
-                        ),
-                      );
-                      _navigateTo(WoListScreen(
-                        machineId: widget.machineId,
-                        machineName: widget.machineName,
-                        shift: widget.shift,
-                        operatorName: widget.operatorName,
-                      ));
-                    },
+                    onTap: () => _navigateTo(DowntimeReportScreen(
+                      machineId: widget.machineId,
+                      machineName: widget.machineName,
+                    )),
                   ),
                   _MenuCard(
                     icon: Icons.timer,
