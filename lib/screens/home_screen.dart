@@ -1,9 +1,14 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'wo_list_screen.dart';
 import 'qdc_timer_screen.dart';
 import 'machine_select_screen.dart';
+import 'hourly_input_screen.dart';
 import '../services/sync_service.dart';
+import '../services/api_service.dart';
+import '../models/work_order.dart';
 import 'downtime_report_screen.dart';
+import 'dashboard_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final int machineId;
@@ -26,22 +31,47 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  WorkOrder? _activeWo;
+  bool _loadingActive = true;
+
+  Timer? _refreshTimer;
+
   @override
   void initState() {
     super.initState();
     SyncService.startAutoSync();
+    _checkActiveWo();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) => _checkActiveWo());
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     SyncService.stopAutoSync();
     super.dispose();
+  }
+
+  Future<void> _checkActiveWo() async {
+    if (!mounted) return;
+    setState(() => _loadingActive = true);
+    try {
+      final orders = await ApiService.getWorkOrders(widget.machineId);
+      final active = orders.where((o) => o.status == 'in_production').firstOrNull;
+      if (mounted) {
+        setState(() {
+          _activeWo = active;
+          _loadingActive = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingActive = false);
+    }
   }
 
   void _navigateTo(Widget screen) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => screen),
-    );
+    ).then((_) => _checkActiveWo());
   }
 
   @override
@@ -113,9 +143,85 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 32),
 
+            if (!_loadingActive && _activeWo != null) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'AKTIF SEKARANG',
+                    style: TextStyle(
+                      color: Color(0xFF22C55E),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF22C55E).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: const Color(0xFF22C55E), width: 1),
+                    ),
+                    child: const Row(
+                      children: [
+                        CircleAvatar(radius: 3, backgroundColor: Color(0xFF22C55E)),
+                        SizedBox(width: 4),
+                        Text('LIVE', style: TextStyle(color: Color(0xFF22C55E), fontSize: 10, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Card(
+                color: const Color(0xFF1E293B),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  side: const BorderSide(color: Color(0xFF22C55E), width: 2),
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => _navigateTo(HourlyInputScreen(
+                    workOrder: _activeWo!,
+                    machineId: widget.machineId,
+                    machineName: widget.machineName,
+                    shift: widget.shift,
+                    operatorName: widget.operatorName,
+                  )),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(_activeWo!.woNumber,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900)),
+                              const SizedBox(height: 4),
+                              Text('${_activeWo!.partNo} - ${_activeWo!.partName}',
+                                  style: const TextStyle(
+                                      color: Colors.white70, fontSize: 13)),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.play_circle_filled,
+                            color: Color(0xFF22C55E), size: 40),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 32),
+            ],
+
             // Menu label
             const Text(
-              'MENU',
+              'MENU UTAMA',
               style: TextStyle(
                 color: Colors.white54,
                 fontSize: 12,
@@ -136,7 +242,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _MenuCard(
                     icon: Icons.assignment,
                     label: 'Work Order',
-                    subtitle: 'Pilih & Monitor WO',
+                    subtitle: 'Daftar WO Hari Ini',
                     color: const Color(0xFF3B82F6),
                     onTap: () => _navigateTo(WoListScreen(
                       machineId: widget.machineId,
@@ -147,8 +253,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                    _MenuCard(
                     icon: Icons.warning_amber_rounded,
-                    label: 'Downtime Report',
-                    subtitle: 'Riwayat downtime hari ini',
+                    label: 'Downtime',
+                    subtitle: 'Masalah & Istirahat',
                     color: const Color(0xFFEF4444),
                     onTap: () => _navigateTo(DowntimeReportScreen(
                       machineId: widget.machineId,
@@ -158,7 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _MenuCard(
                     icon: Icons.timer,
                     label: 'QDC Timer',
-                    subtitle: 'Die Change',
+                    subtitle: 'Die Change / Preparation',
                     color: const Color(0xFFF59E0B),
                     onTap: () => _navigateTo(QdcTimerScreen(
                       machineId: widget.machineId,
@@ -170,7 +276,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _MenuCard(
                     icon: Icons.sync,
                     label: 'Sync Data',
-                    subtitle: 'Upload ke Server',
+                    subtitle: 'Paksa Upload',
                     color: const Color(0xFF10B981),
                     onTap: () async {
                       final ok = await SyncService.attemptSync();
@@ -184,6 +290,19 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       );
                     },
+                  ),
+                  _MenuCard(
+                    icon: Icons.dashboard_rounded,
+                    label: 'Live Monitoring',
+                    subtitle: 'Status Mesin & WO',
+                    color: const Color(0xFF8B5CF6),
+                    onTap: () => _navigateTo(DashboardScreen(
+                      machineId: widget.machineId,
+                      machineName: widget.machineName,
+                      machineCode: widget.machineCode,
+                      shift: widget.shift,
+                      operatorName: widget.operatorName,
+                    )),
                   ),
                 ],
               ),

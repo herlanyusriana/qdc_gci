@@ -1,6 +1,6 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../models/work_order.dart';
 import '../models/hourly_report.dart';
 import '../models/downtime.dart';
@@ -32,7 +32,7 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
   late WorkOrder _wo;
   List<_TimeSlot> _slots = [];
   bool _starting = false;
-  final _formKey = GlobalKey<FormState>();
+  final ScrollController _scrollController = ScrollController();
 
   // Downtime tracking
   Downtime? _activeDowntime;
@@ -57,7 +57,6 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     'Lainnya',
   ];
 
-  // Shift slots
   static const _shiftSlots = {
     'Shift 1': [
       '07:30-08:30', '08:30-09:30', '09:30-10:30', '10:30-11:30',
@@ -84,6 +83,7 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
   @override
   void dispose() {
     _downtimeTimer?.cancel();
+    _scrollController.dispose();
     for (final s in _slots) {
       s.actualController.dispose();
       s.ngController.dispose();
@@ -92,12 +92,13 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
   }
 
   Future<void> _initSlots() async {
-    final shiftKey = widget.shift.startsWith('Shift')
-        ? widget.shift
-        : 'Shift ${widget.shift}';
-    final ranges = _shiftSlots[shiftKey] ?? _shiftSlots['Shift 1']!;
+    final List<Map<String, String>> allRanges = [];
+    _shiftSlots.forEach((shift, ranges) {
+      for (var r in ranges) {
+        allRanges.add({'shift': shift, 'range': r});
+      }
+    });
 
-    // Fetch from server first to sync data from other users
     try {
       final serverReports = await ApiService.getHourlyReports(_wo.id);
       for (final json in serverReports) {
@@ -117,7 +118,6 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
             synced: true,
           ));
         } else if (existing.synced) {
-          // Update local if already synced (to get latest from other users)
           await DatabaseService.updateHourlyReport(existing.id!, {
             'actual': actual,
             'ng': ng,
@@ -130,21 +130,34 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     }
 
     final slots = <_TimeSlot>[];
-    for (final range in ranges) {
+    for (final item in allRanges) {
+      final range = item['range']!;
+      final shift = item['shift']!;
       final existing = await DatabaseService.getHourlyReport(_wo.id, range);
       slots.add(_TimeSlot(
         timeRange: range,
-        actualController:
-            TextEditingController(text: existing?.actual.toString() ?? ''),
-        ngController:
-            TextEditingController(text: existing?.ng.toString() ?? ''),
+        shiftName: shift,
+        actualController: TextEditingController(text: existing?.actual.toString() ?? ''),
+        ngController: TextEditingController(text: existing?.ng.toString() ?? ''),
         localId: existing?.id,
         synced: existing?.synced ?? false,
       ));
     }
+    
     if (!mounted) return;
     setState(() => _slots = slots);
     _recalcTotals();
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final index = _slots.indexWhere((s) => _isCurrentSlot(s.timeRange));
+      if (index != -1 && _scrollController.hasClients) {
+        _scrollController.animateTo(
+          index * 110.0, 
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   Future<void> _loadDowntimeState() async {
@@ -174,7 +187,6 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     });
   }
 
-  // ─── Start WO ───
   Future<void> _startWo() async {
     setState(() => _starting = true);
     try {
@@ -200,25 +212,21 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
         );
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('WO dimulai!'), backgroundColor: Colors.green),
+        const SnackBar(content: Text('WO dimulai!'), backgroundColor: Colors.green),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('Gagal start: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text('Gagal start: $e'), backgroundColor: Colors.red),
       );
     } finally {
       if (mounted) setState(() => _starting = false);
     }
   }
 
-  // ─── Save hourly slot ───
   Future<void> _saveSlot(_TimeSlot slot) async {
     final actual = int.tryParse(slot.actualController.text) ?? 0;
     final ng = int.tryParse(slot.ngController.text) ?? 0;
-    final targetPerSlot =
-        _slots.isNotEmpty ? (_wo.qtyPlanned / _slots.length).round() : 0;
+    final targetPerSlot = _slots.isNotEmpty ? (_wo.qtyPlanned / 24).round() : 0;
 
     if (slot.localId != null) {
       await DatabaseService.updateHourlyReport(slot.localId!, {
@@ -240,8 +248,6 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     }
     slot.synced = false;
     _recalcTotals();
-
-    // Trigger immediate sync
     SyncService.attemptSync();
 
     if (!mounted) return;
@@ -281,136 +287,113 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     });
   }
 
-  // ─── Downtime: show reason picker & start ───
   void _showDowntimeSheet() {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E293B),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) {
-        return Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Handle bar
-              Center(
-                child: Container(
-                  width: 40, height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(2),
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          maxChildSize: 0.9,
+          minChildSize: 0.4,
+          expand: false,
+          builder: (_, scrollController) {
+            return Column(
+              children: [
+                const SizedBox(height: 12),
+                Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+                const SizedBox(height: 16),
+                const Text('ALASAN DOWNTIME', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: ListView.builder(
+                    controller: scrollController,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: _downtimeReasons.length,
+                    itemBuilder: (c, i) {
+                      final reason = _downtimeReasons[i];
+                      return ListTile(
+                        leading: _getReasonIcon(reason),
+                        title: Text(reason, style: const TextStyle(color: Colors.white)),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _startDowntime(reason);
+                        },
+                      );
+                    },
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              const Text('ALASAN DOWNTIME',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900)),
-              const SizedBox(height: 4),
-              Text('WO: ${_wo.woNumber}',
-                  style: const TextStyle(color: Colors.white38, fontSize: 12)),
-              const SizedBox(height: 16),
-              ..._downtimeReasons.map((reason) {
-                IconData icon;
-                Color color;
-                switch (reason) {
-                  case 'Mesin Rusak':
-                    icon = Icons.settings_suggest;
-                    color = const Color(0xFFEF4444);
-                    break;
-                  case 'Robot Trouble':
-                    icon = Icons.precision_manufacturing;
-                    color = const Color(0xFFEF4444);
-                    break;
-                  case 'Dies Trouble':
-                    icon = Icons.architecture;
-                    color = const Color(0xFFEF4444);
-                    break;
-                  case 'Material NG Quality':
-                    icon = Icons.report_problem;
-                    color = const Color(0xFFF59E0B);
-                    break;
-                  case 'Tooling Trouble':
-                    icon = Icons.build_circle;
-                    color = const Color(0xFFEF4444);
-                    break;
-                  case 'Listrik Trouble / Mati Lampu':
-                    icon = Icons.flash_off;
-                    color = const Color(0xFFEF4444);
-                    break;
-                  case 'Maintenance':
-                    icon = Icons.engineering;
-                    color = const Color(0xFF14B8A6);
-                    break;
-                  case 'Ganti Type':
-                    icon = Icons.swap_horiz;
-                    color = const Color(0xFF8B5CF6);
-                    break;
-                  case 'Ganti Material / Reffil Material':
-                    icon = Icons.inventory_2;
-                    color = const Color(0xFF8B5CF6);
-                    break;
-                  case 'Cleaning Machine':
-                    icon = Icons.cleaning_services;
-                    color = const Color(0xFF10B981);
-                    break;
-                  case 'Briefing':
-                    icon = Icons.groups;
-                    color = const Color(0xFF3B82F6);
-                    break;
-                  case 'Trial':
-                    icon = Icons.science;
-                    color = const Color(0xFFF97316);
-                    break;
-                  case 'Istirahat':
-                    icon = Icons.free_breakfast;
-                    color = const Color(0xFF60A5FA);
-                    break;
-                  default:
-                    icon = Icons.more_horiz;
-                    color = Colors.white54;
-                }
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Material(
-                    color: Colors.white.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(12),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () {
-                        Navigator.of(ctx).pop();
-                        _startDowntime(reason);
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 14),
-                        child: Row(
-                          children: [
-                            Icon(icon, color: color, size: 22),
-                            const SizedBox(width: 14),
-                            Text(reason,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ],
-          ),
+              ],
+            );
+          },
         );
       },
     );
+  }
+
+  Icon _getReasonIcon(String reason) {
+    IconData icon;
+    Color color;
+    switch (reason) {
+      case 'Mesin Rusak':
+        icon = Icons.settings_suggest;
+        color = const Color(0xFFEF4444);
+        break;
+      case 'Robot Trouble':
+        icon = Icons.precision_manufacturing;
+        color = const Color(0xFFEF4444);
+        break;
+      case 'Dies Trouble':
+        icon = Icons.architecture;
+        color = const Color(0xFFEF4444);
+        break;
+      case 'Material NG Quality':
+        icon = Icons.report_problem;
+        color = const Color(0xFFF59E0B);
+        break;
+      case 'Tooling Trouble':
+        icon = Icons.build_circle;
+        color = const Color(0xFFEF4444);
+        break;
+      case 'Listrik Trouble / Mati Lampu':
+        icon = Icons.flash_off;
+        color = const Color(0xFFEF4444);
+        break;
+      case 'Maintenance':
+        icon = Icons.engineering;
+        color = const Color(0xFF14B8A6);
+        break;
+      case 'Ganti Type':
+        icon = Icons.swap_horiz;
+        color = const Color(0xFF8B5CF6);
+        break;
+      case 'Ganti Material / Reffil Material':
+        icon = Icons.inventory_2;
+        color = const Color(0xFF8B5CF6);
+        break;
+      case 'Cleaning Machine':
+        icon = Icons.cleaning_services;
+        color = const Color(0xFF10B981);
+        break;
+      case 'Briefing':
+        icon = Icons.groups;
+        color = const Color(0xFF3B82F6);
+        break;
+      case 'Trial':
+        icon = Icons.science;
+        color = const Color(0xFFF97316);
+        break;
+      case 'Istirahat':
+        icon = Icons.free_breakfast;
+        color = const Color(0xFF60A5FA);
+        break;
+      default:
+        icon = Icons.warning;
+        color = Colors.amber;
+    }
+    return Icon(icon, color: color);
   }
 
   Future<void> _startDowntime(String reason) async {
@@ -426,52 +409,27 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     );
     final newId = await DatabaseService.insertDowntime(dt);
     final saved = Downtime(
-      id: newId,
-      machineId: dt.machineId,
-      machineName: dt.machineName,
-      shift: dt.shift,
-      operatorName: dt.operatorName,
-      startTime: dt.startTime,
-      reason: dt.reason,
-      productionOrderId: dt.productionOrderId,
+      id: newId, machineId: dt.machineId, machineName: dt.machineName,
+      shift: dt.shift, operatorName: dt.operatorName, startTime: dt.startTime,
+      reason: dt.reason, productionOrderId: dt.productionOrderId,
     );
     setState(() => _activeDowntime = saved);
     _startDowntimeCounter(saved);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text('⚠ Downtime dimulai: $reason'),
-          backgroundColor: const Color(0xFFDC2626)),
-    );
   }
 
   Future<void> _stopDowntime() async {
     if (_activeDowntime == null) return;
-
     _downtimeTimer?.cancel();
     final endTime = DateTime.now();
     final start = DateTime.parse(_activeDowntime!.startTime);
     final durationMinutes = endTime.difference(start).inMinutes;
-
     await DatabaseService.updateDowntime(_activeDowntime!.id, {
       'endTime': endTime.toIso8601String(),
       'durationMinutes': durationMinutes,
       'synced': 0,
     });
-
-    setState(() {
-      _activeDowntime = null;
-      _downtimeSeconds = 0;
-    });
+    setState(() { _activeDowntime = null; _downtimeSeconds = 0; });
     await _loadDowntimeState();
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text('✓ Downtime selesai ($durationMinutes menit)'),
-          backgroundColor: const Color(0xFF22C55E)),
-    );
   }
 
   String _formatSeconds(int s) {
@@ -481,24 +439,17 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
   }
 
   int get _totalDowntimeMinutes {
-    int total = 0;
-    for (final dt in _todayDowntimes) {
-      if (dt.reason != 'Istirahat') {
-        total += dt.durationMinutes ?? 0;
-      }
-    }
+    int total = _todayDowntimes.where((d) => d.reason != 'Istirahat').fold(0, (sum, d) => sum + (d.durationMinutes ?? 0));
     if (_activeDowntime != null && _activeDowntime!.reason != 'Istirahat') {
       total += _downtimeSeconds ~/ 60;
     }
     return total;
   }
 
-  // ─── Build UI ───
   @override
   Widget build(BuildContext context) {
-    final progress = _wo.progressPercent;
-    final now = DateFormat('HH:mm').format(DateTime.now());
     final isDown = _activeDowntime != null;
+    final progress = _wo.progressPercent;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
@@ -507,361 +458,147 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(_wo.woNumber,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-            Text('${_wo.partNo ?? '-'} • ${_wo.partName ?? '-'}',
-                style: const TextStyle(fontSize: 11, color: Colors.white60)),
+            Text(_wo.woNumber, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+            Text('${_wo.partNo ?? '-'} • ${_wo.partName ?? '-'}', style: const TextStyle(fontSize: 11, color: Colors.white60)),
           ],
         ),
         actions: [
           IconButton(
             icon: const Icon(Icons.sync, color: Color(0xFF3B82F6)),
             onPressed: () async {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Menyinkronkan data...')),
-              );
-              final success = await SyncService.attemptSync();
+              final ok = await SyncService.attemptSync();
               if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(success ? 'Sync Berhasil ✓' : 'Sync Gagal ✗'),
-                    backgroundColor: success ? const Color(0xFF22C55E) : const Color(0xFFEF4444),
-                  ),
-                );
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Sync Berhasil ✓' : 'Sync Gagal ✗')));
               }
-            },
-            tooltip: 'Sinkron data sekarang',
-          ),
-          IconButton(
-            icon: const Icon(Icons.history, color: Colors.white70),
-            onPressed: () {
-              // TODO: Implement history view
             },
           ),
         ],
       ),
-      // FAB for downtime
       floatingActionButton: _wo.isRunning
           ? FloatingActionButton.extended(
               onPressed: isDown ? _stopDowntime : _showDowntimeSheet,
               icon: Icon(isDown ? Icons.play_arrow : Icons.warning_amber_rounded),
-              label: Text(
-                isDown ? 'MESIN JALAN' : 'CATAT DOWNTIME',
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-              backgroundColor: isDown
-                  ? const Color(0xFF22C55E)
-                  : const Color(0xFFDC2626),
+              label: Text(isDown ? 'MESIN JALAN' : 'CATAT DOWNTIME', style: const TextStyle(fontWeight: FontWeight.w900)),
+              backgroundColor: isDown ? Colors.green : Colors.red,
             )
           : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      body: Form(
-        key: _formKey,
-        child: Column(
-          children: [
-            // Active downtime banner
-            if (isDown)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                color: _activeDowntime?.reason == 'Istirahat' ? const Color(0xFF3B82F6) : const Color(0xFFDC2626),
-                child: Row(
+      body: Column(
+        children: [
+          if (isDown)
+            Container(
+              width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              color: _activeDowntime?.reason == 'Istirahat' ? Colors.blue : Colors.red,
+              child: Row(
+                children: [
+                  Icon(_activeDowntime?.reason == 'Istirahat' ? Icons.free_breakfast : Icons.warning, color: Colors.white, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${_activeDowntime!.reason.toUpperCase()} — ${_formatSeconds(_downtimeSeconds)}',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (_wo.isRunning)
+            Container(
+              width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              color: const Color(0xFF15803D),
+              child: const Row(
+                children: [
+                  Icon(Icons.play_circle_filled, color: Colors.white, size: 18),
+                  SizedBox(width: 8),
+                  Text(
+                    'STATUS: PRODUKSI BERJALAN (RUNNING)',
+                    style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+                  ),
+                ],
+              ),
+            ),
+          Container(
+            margin: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(16)),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    Icon(
-                      _activeDowntime?.reason == 'Istirahat' ? Icons.free_breakfast : Icons.warning,
-                      color: Colors.white, 
-                      size: 20
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _activeDowntime?.reason == 'Istirahat' 
-                              ? '☕ BREAK — ${_activeDowntime!.reason}'
-                              : '⚠ DOWNTIME — ${_activeDowntime!.reason}',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 13),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'Durasi: ${_formatSeconds(_downtimeSeconds)}',
-                            style: const TextStyle(
-                                color: Colors.white70, fontSize: 11),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Text(
-                      _formatSeconds(_downtimeSeconds),
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          fontFeatures: [FontFeature.tabularFigures()]),
-                    ),
+                    _SummaryTile(label: 'TARGET', value: _wo.qtyPlanned.toInt().toString(), color: Colors.white),
+                    _SummaryTile(label: 'ACTUAL', value: _wo.qtyActual.toInt().toString(), color: Colors.green),
+                    _SummaryTile(label: 'REMAINING', value: (_wo.qtyPlanned - _wo.qtyActual).toInt().toString(), color: Colors.amber),
+                    _SummaryTile(label: 'DOWNTIME', value: '${_totalDowntimeMinutes}m', color: Colors.orange),
                   ],
                 ),
-              ),
-
-            // Summary header
-            Container(
-              margin: const EdgeInsets.all(16),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E293B),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                    color: _wo.isRunning
-                        ? const Color(0xFF22C55E).withValues(alpha: 0.3)
-                        : Colors.white.withValues(alpha: 0.1)),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _SummaryTile(
-                          label: 'Target',
-                          value: _wo.qtyPlanned.toInt().toString(),
-                          color: Colors.white),
-                      _SummaryTile(
-                          label: 'Actual',
-                          value: _wo.qtyActual.toInt().toString(),
-                          color: const Color(0xFF22C55E)),
-                      _SummaryTile(
-                          label: 'NG',
-                          value: _wo.qtyNg.toInt().toString(),
-                          color: const Color(0xFFEF4444)),
-                      _SummaryTile(
-                          label: 'DT',
-                          value: '${_totalDowntimeMinutes}m',
-                          color: const Color(0xFFF59E0B)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: LinearProgressIndicator(
-                      value: progress / 100,
-                      backgroundColor: Colors.white.withValues(alpha: 0.1),
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        progress >= 100
-                            ? const Color(0xFF22C55E)
-                            : const Color(0xFF3B82F6),
+                const SizedBox(height: 12),
+                LinearProgressIndicator(value: progress / 100, backgroundColor: Colors.white10, valueColor: AlwaysStoppedAnimation(progress >= 100 ? Colors.green : Colors.blue)),
+                const SizedBox(height: 4),
+                Align(alignment: Alignment.centerRight, child: Text('${progress.toStringAsFixed(0)}%', style: const TextStyle(color: Colors.blue, fontSize: 12, fontWeight: FontWeight.bold))),
+                if (_wo.canStart) ...[
+                   const SizedBox(height: 12),
+                   SizedBox(
+                     width: double.infinity,
+                     child: ElevatedButton(
+                       onPressed: _starting ? null : _startWo,
+                       style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                       child: const Text('MULAI PRODUKSI', style: TextStyle(fontWeight: FontWeight.bold)),
+                     ),
+                   )
+                ]
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.only(bottom: 100),
+              itemCount: _slots.length,
+              itemBuilder: (ctx, i) {
+                final slot = _slots[i];
+                final isCurrent = _isCurrentSlot(slot.timeRange);
+                final showHeader = i == 0 || _slots[i].shiftName != _slots[i-1].shiftName;
+                
+                return Column(
+                  children: [
+                    if (showHeader)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: Row(
+                          children: [
+                            Text(slot.shiftName, style: TextStyle(color: slot.shiftName == widget.shift ? Colors.amber : Colors.white24, fontWeight: FontWeight.bold)),
+                            const Expanded(child: Divider(indent: 8, color: Colors.white10)),
+                          ],
+                        ),
                       ),
-                      minHeight: 8,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Text(
-                      '${progress.toStringAsFixed(0)}%',
-                      style: TextStyle(
-                          color: progress >= 100
-                              ? const Color(0xFF22C55E)
-                              : const Color(0xFF3B82F6),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  // Start WO button
-                  if (_wo.canStart)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _starting ? null : _startWo,
-                        icon: _starting
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.play_arrow),
-                        label: const Text('MULAI PRODUKSI',
-                            style: TextStyle(fontWeight: FontWeight.w800)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF22C55E),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
+                    Card(
+                      color: isCurrent ? const Color(0xFF334155) : const Color(0xFF1E293B),
+                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: isCurrent ? const BorderSide(color: Colors.blue, width: 2) : BorderSide.none),
+                      child: ListTile(
+                        title: Text(slot.timeRange, style: TextStyle(color: isCurrent ? Colors.white : Colors.white70, fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal)),
+                        subtitle: isCurrent ? const Text('Jam Sekarang', style: TextStyle(color: Colors.blue, fontSize: 10)) : null,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _CompactInput(controller: slot.actualController, label: 'OK', color: Colors.green),
+                            const SizedBox(width: 8),
+                            _CompactInput(controller: slot.ngController, label: 'NG', color: Colors.red),
+                            IconButton(
+                              icon: Icon(slot.synced ? Icons.cloud_done : Icons.save, color: slot.synced ? Colors.green : Colors.blue),
+                              onPressed: () => _saveSlot(slot),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                ],
-              ),
+                  ],
+                );
+              },
             ),
-
-            // Hourly input list label
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  const Text('INPUT PER JAM',
-                      style: TextStyle(
-                          color: Colors.white54,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1)),
-                  const Spacer(),
-                  if (_todayDowntimes.isNotEmpty)
-                    Text('DT: ${_todayDowntimes.length}x (${_totalDowntimeMinutes}m)',
-                        style: const TextStyle(
-                            color: Color(0xFFF59E0B), fontSize: 11, fontWeight: FontWeight.w700)),
-                  const SizedBox(width: 8),
-                  Text('Sekarang: $now',
-                      style:
-                          const TextStyle(color: Colors.white38, fontSize: 11)),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-
-            // Slots list
-            Expanded(
-              child: _slots.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
-                  : ListView.builder(
-                      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 80),
-                      itemCount: _slots.length,
-                      itemBuilder: (ctx, i) {
-                        final slot = _slots[i];
-                        final isCurrentHour = _isCurrentSlot(slot.timeRange);
-                        return Card(
-                          color: isCurrentHour
-                              ? const Color(0xFF1E3A5F)
-                              : const Color(0xFF1E293B),
-                          margin: const EdgeInsets.only(bottom: 8),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: isCurrentHour
-                                ? const BorderSide(
-                                    color: Color(0xFF3B82F6), width: 1.5)
-                                : BorderSide.none,
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
-                            child: Row(
-                              children: [
-                                // Time range
-                                SizedBox(
-                                  width: 90,
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(slot.timeRange,
-                                          style: TextStyle(
-                                              color: isCurrentHour
-                                                  ? Colors.white
-                                                  : Colors.white70,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w700)),
-                                      if (isCurrentHour)
-                                        const Text('▶ Sekarang',
-                                            style: TextStyle(
-                                                color: Color(0xFF3B82F6),
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.w800)),
-                                    ],
-                                  ),
-                                ),
-                                // OK input
-                                Expanded(
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6),
-                                    child: TextField(
-                                      controller: slot.actualController,
-                                      keyboardType: TextInputType.number,
-                                      style: const TextStyle(
-                                          color: Color(0xFF22C55E),
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w800),
-                                      textAlign: TextAlign.center,
-                                      decoration: InputDecoration(
-                                        labelText: 'OK',
-                                        labelStyle: const TextStyle(
-                                            color: Colors.white38,
-                                            fontSize: 11),
-                                        filled: true,
-                                        fillColor: Colors.white
-                                            .withValues(alpha: 0.05),
-                                        border: OutlineInputBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          borderSide: BorderSide.none,
-                                        ),
-                                        isDense: true,
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                                horizontal: 8, vertical: 10),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                // NG input
-                                SizedBox(
-                                  width: 60,
-                                  child: TextField(
-                                    controller: slot.ngController,
-                                    keyboardType: TextInputType.number,
-                                    style: const TextStyle(
-                                        color: Color(0xFFEF4444),
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w800),
-                                    textAlign: TextAlign.center,
-                                    decoration: InputDecoration(
-                                      labelText: 'NG',
-                                      labelStyle: const TextStyle(
-                                          color: Colors.white38,
-                                          fontSize: 11),
-                                      filled: true,
-                                      fillColor: Colors.white
-                                          .withValues(alpha: 0.05),
-                                      border: OutlineInputBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(8),
-                                        borderSide: BorderSide.none,
-                                      ),
-                                      isDense: true,
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 10),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                // Save button
-                                IconButton(
-                                  icon: Icon(
-                                    slot.synced
-                                        ? Icons.cloud_done
-                                        : Icons.save,
-                                    color: slot.synced
-                                        ? const Color(0xFF22C55E)
-                                        : const Color(0xFF3B82F6),
-                                    size: 22,
-                                  ),
-                                  onPressed: () => _saveSlot(slot),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -870,62 +607,66 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     final parts = timeRange.split('-');
     if (parts.length != 2) return false;
     final now = TimeOfDay.now();
-    final nowMinutes = now.hour * 60 + now.minute;
-
+    final nowMin = now.hour * 60 + now.minute;
     final start = _parseTime(parts[0]);
     final end = _parseTime(parts[1]);
-
     if (start == null || end == null) return false;
-
-    if (end > start) {
-      return nowMinutes >= start && nowMinutes < end;
-    } else {
-      return nowMinutes >= start || nowMinutes < end;
-    }
+    return end > start ? (nowMin >= start && nowMin < end) : (nowMin >= start || nowMin < end);
   }
 
   int? _parseTime(String t) {
-    final p = t.trim().split(':');
-    if (p.length != 2) return null;
+    final p = t.trim().split(':'); if (p.length != 2) return null;
     return (int.tryParse(p[0]) ?? 0) * 60 + (int.tryParse(p[1]) ?? 0);
   }
 }
 
 class _TimeSlot {
   final String timeRange;
+  final String shiftName;
   final TextEditingController actualController;
   final TextEditingController ngController;
   int? localId;
   bool synced;
-
-  _TimeSlot({
-    required this.timeRange,
-    required this.actualController,
-    required this.ngController,
-    this.localId,
-    this.synced = false,
-  });
+  _TimeSlot({required this.timeRange, required this.shiftName, required this.actualController, required this.ngController, this.localId, this.synced = false});
 }
 
 class _SummaryTile extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
-
-  const _SummaryTile(
-      {required this.label, required this.value, required this.color});
-
+  const _SummaryTile({required this.label, required this.value, required this.color});
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Text(label,
-            style: const TextStyle(color: Colors.white38, fontSize: 10)),
-        const SizedBox(height: 2),
-        Text(value,
-            style: TextStyle(
-                color: color, fontSize: 20, fontWeight: FontWeight.w900)),
+        Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+        Text(value, style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+}
+
+class _CompactInput extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final Color color;
+  const _CompactInput({required this.controller, required this.label, required this.color});
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 50,
+      child: TextField(
+        controller: controller,
+        keyboardType: TextInputType.number,
+        textAlign: TextAlign.center,
+        style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold),
+        decoration: InputDecoration(
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+          labelText: label, labelStyle: const TextStyle(fontSize: 10),
+          enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+        ),
+      ),
     );
   }
 }

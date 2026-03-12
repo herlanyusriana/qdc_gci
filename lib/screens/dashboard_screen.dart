@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/downtime.dart';
+import '../models/work_order.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/sync_service.dart';
@@ -43,6 +44,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Timer? _clockTimer;
   String _currentTime = '';
   Downtime? _activeDowntime;
+  WorkOrder? _activeWo;
   List<Downtime> _todayDowntimes = [];
   bool _loading = true;
 
@@ -73,9 +75,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _loadData() async {
     final active = await DatabaseService.getActiveDowntime(widget.machineId);
     final today = await DatabaseService.getTodayDowntimes(widget.machineId);
+    
+    // Fetch active WO from API (since it's not stored locally in a way we can just query easily without context)
+    WorkOrder? activeWo;
+    try {
+      final orders = await ApiService.getWorkOrders(widget.machineId);
+      activeWo = orders.where((o) => o.status == 'in_production').firstOrNull;
+    } catch (_) {}
+
     if (!mounted) return;
     setState(() {
       _activeDowntime = active;
+      _activeWo = activeWo;
       _todayDowntimes = today;
       _loading = false;
     });
@@ -629,7 +640,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 12),
-                    color: const Color(0xFF1E293B),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF1E293B), Color(0xFF334155)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
                     child: Row(
                       children: [
                         // Machine + shift + operator
@@ -687,21 +704,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: Text(
-                            isStopped
-                                ? 'MESIN STOP - ${_activeDowntime!.reason}'
-                                : 'MESIN BERJALAN',
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                isStopped
+                                    ? 'MESIN STOP - ${_activeDowntime!.reason}'
+                                    : 'MESIN BERJALAN',
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              if (!isStopped && _activeWo != null)
+                                Text(
+                                  'PRODUKSI: ${_activeWo!.woNumber}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                         if (isStopped)
                           _RunningTimer(
                               startTime: DateTime.parse(
                                   _activeDowntime!.startTime)),
+                        if (!isStopped && _activeWo != null)
+                           Container(
+                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                             decoration: BoxDecoration(
+                               color: Colors.white.withValues(alpha: 0.15),
+                               borderRadius: BorderRadius.circular(6),
+                               border: Border.all(color: Colors.white30, width: 0.5),
+                             ),
+                             child: const Row(
+                               children: [
+                                 _PulsingDot(color: Colors.white),
+                                 SizedBox(width: 6),
+                                 Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900)),
+                               ],
+                             ),
+                           ),
                       ],
                     ),
                   ),
@@ -1067,6 +1114,49 @@ class _RunningTimerState extends State<_RunningTimer> {
         fontWeight: FontWeight.w900,
         color: Colors.amber,
         fontFamily: 'monospace',
+      ),
+    );
+  }
+}
+
+class _PulsingDot extends StatefulWidget {
+  final Color color;
+  const _PulsingDot({required this.color});
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _controller,
+      child: Container(
+        width: 6,
+        height: 6,
+        decoration: BoxDecoration(
+          color: widget.color,
+          shape: BoxShape.circle,
+        ),
       ),
     );
   }

@@ -63,6 +63,7 @@ class WorkOrder {
 
   bool get isRunning => status == 'in_production';
   bool get isCompleted => status == 'completed';
+  bool get isPlanned => status == 'planned';
   bool get canStart => !isRunning && !isCompleted && status != 'cancelled';
   double get progressPercent => qtyPlanned > 0 ? (qtyActual / qtyPlanned * 100).clamp(0, 100) : 0;
 }

@@ -212,9 +212,8 @@ class _WoListScreenState extends State<WoListScreen> {
                               side: BorderSide(
                                   color: wo.isRunning
                                       ? const Color(0xFF22C55E)
-                                          .withValues(alpha: 0.5)
                                       : Colors.transparent,
-                                  width: 1.5),
+                                  width: wo.isRunning ? 2.0 : 0.0),
                             ),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(16),
