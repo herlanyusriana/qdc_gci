@@ -116,6 +116,18 @@ class ApiService {
     return resp.statusCode == 200;
   }
 
+  // Get hourly reports from server
+  static Future<List<Map<String, dynamic>>> getHourlyReports(int woId) async {
+    final resp = await http.get(
+      Uri.parse('$baseUrl/production-gci/wo/$woId/hourly'),
+      headers: await _headers,
+    );
+    if (resp.statusCode == 200) {
+      final data = jsonDecode(resp.body);
+      return List<Map<String, dynamic>>.from(data['data']);
+    }
+    return [];
+  }
   // Sync downtimes + hourly reports + qdc sessions to server
   static Future<bool> syncToServer() async {
     final downtimes = await DatabaseService.getUnsyncedDowntimes();
@@ -149,7 +161,7 @@ class ApiService {
             await DatabaseService.markDowntimeSynced(d.id);
           }
           for (final h in hourlyReports) {
-            await DatabaseService.markHourlyReportSynced(h.id);
+            await DatabaseService.markHourlyReportSynced(h.id!);
           }
         }
       }

@@ -1,5 +1,5 @@
 class HourlyReport {
-  final int id;
+  final int? id;
   final int productionOrderId;
   final String timeRange;
   final int target;
@@ -8,7 +8,7 @@ class HourlyReport {
   final bool synced;
 
   HourlyReport({
-    required this.id,
+    this.id,
     required this.productionOrderId,
     required this.timeRange,
     required this.target,
@@ -28,7 +28,7 @@ class HourlyReport {
       };
 
   factory HourlyReport.fromMap(Map<String, dynamic> m) => HourlyReport(
-        id: m['id'] as int,
+        id: m['id'] as int?,
         productionOrderId: m['productionOrderId'] as int,
         timeRange: m['timeRange'] as String,
         target: m['target'] as int? ?? 0,

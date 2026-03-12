@@ -42,12 +42,18 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
 
   static const _downtimeReasons = [
     'Mesin Rusak',
-    'Material Habis',
-    'Ganti Tipe/Setting',
-    'Waiting Material',
-    'Kualitas NG',
-    'Istirahat',
+    'Robot Trouble',
+    'Dies Trouble',
+    'Material NG Quality',
+    'Tooling Trouble',
+    'Listrik Trouble / Mati Lampu',
     'Maintenance',
+    'Ganti Type',
+    'Ganti Material / Reffil Material',
+    'Cleaning Machine',
+    'Briefing',
+    'Trial',
+    'Istirahat',
     'Lainnya',
   ];
 
@@ -91,6 +97,38 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
         : 'Shift ${widget.shift}';
     final ranges = _shiftSlots[shiftKey] ?? _shiftSlots['Shift 1']!;
 
+    // Fetch from server first to sync data from other users
+    try {
+      final serverReports = await ApiService.getHourlyReports(_wo.id);
+      for (final json in serverReports) {
+        final range = json['time_range'] as String;
+        final actual = json['actual'] as int;
+        final ng = json['ng'] as int;
+        final target = json['target'] as int;
+
+        final existing = await DatabaseService.getHourlyReport(_wo.id, range);
+        if (existing == null) {
+          await DatabaseService.insertHourlyReport(HourlyReport(
+            productionOrderId: _wo.id,
+            timeRange: range,
+            target: target,
+            actual: actual,
+            ng: ng,
+            synced: true,
+          ));
+        } else if (existing.synced) {
+          // Update local if already synced (to get latest from other users)
+          await DatabaseService.updateHourlyReport(existing.id!, {
+            'actual': actual,
+            'ng': ng,
+            'target': target,
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Sync hourly reports error: $e');
+    }
+
     final slots = <_TimeSlot>[];
     for (final range in ranges) {
       final existing = await DatabaseService.getHourlyReport(_wo.id, range);
@@ -106,6 +144,7 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     }
     if (!mounted) return;
     setState(() => _slots = slots);
+    _recalcTotals();
   }
 
   Future<void> _loadDowntimeState() async {
@@ -190,7 +229,6 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
       });
     } else {
       final hr = HourlyReport(
-        id: 0,
         productionOrderId: _wo.id,
         timeRange: slot.timeRange,
         target: targetPerSlot,
@@ -283,32 +321,56 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
                 Color color;
                 switch (reason) {
                   case 'Mesin Rusak':
-                    icon = Icons.build;
+                    icon = Icons.settings_suggest;
                     color = const Color(0xFFEF4444);
                     break;
-                  case 'Material Habis':
-                    icon = Icons.inventory_2;
+                  case 'Robot Trouble':
+                    icon = Icons.precision_manufacturing;
+                    color = const Color(0xFFEF4444);
+                    break;
+                  case 'Dies Trouble':
+                    icon = Icons.architecture;
+                    color = const Color(0xFFEF4444);
+                    break;
+                  case 'Material NG Quality':
+                    icon = Icons.report_problem;
                     color = const Color(0xFFF59E0B);
                     break;
-                  case 'Ganti Tipe/Setting':
-                    icon = Icons.swap_horiz;
-                    color = const Color(0xFF8B5CF6);
+                  case 'Tooling Trouble':
+                    icon = Icons.build_circle;
+                    color = const Color(0xFFEF4444);
                     break;
-                  case 'Waiting Material':
-                    icon = Icons.hourglass_top;
-                    color = const Color(0xFFFB923C);
-                    break;
-                  case 'Kualitas NG':
-                    icon = Icons.error_outline;
-                    color = const Color(0xFFDC2626);
-                    break;
-                  case 'Istirahat':
-                    icon = Icons.free_breakfast;
-                    color = const Color(0xFF60A5FA);
+                  case 'Listrik Trouble / Mati Lampu':
+                    icon = Icons.flash_off;
+                    color = const Color(0xFFEF4444);
                     break;
                   case 'Maintenance':
                     icon = Icons.engineering;
                     color = const Color(0xFF14B8A6);
+                    break;
+                  case 'Ganti Type':
+                    icon = Icons.swap_horiz;
+                    color = const Color(0xFF8B5CF6);
+                    break;
+                  case 'Ganti Material / Reffil Material':
+                    icon = Icons.inventory_2;
+                    color = const Color(0xFF8B5CF6);
+                    break;
+                  case 'Cleaning Machine':
+                    icon = Icons.cleaning_services;
+                    color = const Color(0xFF10B981);
+                    break;
+                  case 'Briefing':
+                    icon = Icons.groups;
+                    color = const Color(0xFF3B82F6);
+                    break;
+                  case 'Trial':
+                    icon = Icons.science;
+                    color = const Color(0xFFF97316);
+                    break;
+                  case 'Istirahat':
+                    icon = Icons.free_breakfast;
+                    color = const Color(0xFF60A5FA);
                     break;
                   default:
                     icon = Icons.more_horiz;
@@ -421,9 +483,11 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
   int get _totalDowntimeMinutes {
     int total = 0;
     for (final dt in _todayDowntimes) {
-      total += dt.durationMinutes ?? 0;
+      if (dt.reason != 'Istirahat') {
+        total += dt.durationMinutes ?? 0;
+      }
     }
-    if (_activeDowntime != null) {
+    if (_activeDowntime != null && _activeDowntime!.reason != 'Istirahat') {
       total += _downtimeSeconds ~/ 60;
     }
     return total;
@@ -501,17 +565,23 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                color: const Color(0xFFDC2626),
+                color: _activeDowntime?.reason == 'Istirahat' ? const Color(0xFF3B82F6) : const Color(0xFFDC2626),
                 child: Row(
                   children: [
-                    const Icon(Icons.warning, color: Colors.white, size: 20),
+                    Icon(
+                      _activeDowntime?.reason == 'Istirahat' ? Icons.free_breakfast : Icons.warning,
+                      color: Colors.white, 
+                      size: 20
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '⚠ DOWNTIME — ${_activeDowntime!.reason}',
+                            _activeDowntime?.reason == 'Istirahat' 
+                              ? '☕ BREAK — ${_activeDowntime!.reason}'
+                              : '⚠ DOWNTIME — ${_activeDowntime!.reason}',
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w900,
