@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../models/work_order.dart';
 import '../models/hourly_report.dart';
@@ -546,9 +545,10 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
           IconButton(
             icon: const Icon(Icons.sync, color: Color(0xFF3B82F6)),
             onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
               final ok = await SyncService.attemptSync();
               if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Sync Berhasil ✓' : 'Sync Gagal ✗')));
+                messenger.showSnackBar(SnackBar(content: Text(ok ? 'Sync Berhasil ✓' : 'Sync Gagal ✗')));
               }
             },
           ),

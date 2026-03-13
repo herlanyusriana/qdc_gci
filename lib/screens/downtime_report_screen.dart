@@ -76,7 +76,7 @@ class _DowntimeReportScreenState extends State<DowntimeReportScreen> {
                         borderRadius: BorderRadius.circular(24),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFFEF4444).withOpacity(0.3),
+                            color: const Color(0xFFEF4444).withValues(alpha: 0.3),
                             blurRadius: 20,
                             offset: const Offset(0, 10),
                           ),
@@ -102,7 +102,7 @@ class _DowntimeReportScreenState extends State<DowntimeReportScreen> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                             decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.1),
+                              color: Colors.black.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
@@ -143,7 +143,7 @@ class _DowntimeReportScreenState extends State<DowntimeReportScreen> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.check_circle_outline, size: 64, color: Colors.green.withOpacity(0.5)),
+                                Icon(Icons.check_circle_outline, size: 64, color: Colors.green.withValues(alpha: 0.5)),
                                 const SizedBox(height: 16),
                                 const Text(
                                   'Bagus! Tidak ada downtime hari ini.',
@@ -183,7 +183,7 @@ class _DowntimeReportScreenState extends State<DowntimeReportScreen> {
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
+            color: Colors.black.withValues(alpha: 0.02),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
