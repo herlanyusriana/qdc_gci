@@ -17,7 +17,7 @@ class DatabaseService {
     final path = join(await getDatabasesPath(), 'qdc_gci.db');
     return openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE downtimes (
@@ -46,6 +46,8 @@ class DatabaseService {
             target INTEGER NOT NULL DEFAULT 0,
             actual INTEGER NOT NULL DEFAULT 0,
             ng INTEGER NOT NULL DEFAULT 0,
+            operatorName TEXT,
+            shift TEXT,
             synced INTEGER DEFAULT 0
           )
         ''');
@@ -117,6 +119,12 @@ class DatabaseService {
         if (oldVersion < 6) {
           await db.execute(
               'ALTER TABLE downtimes ADD COLUMN productionOrderId INTEGER');
+        }
+        if (oldVersion < 7) {
+          await db.execute(
+              'ALTER TABLE hourly_reports ADD COLUMN operatorName TEXT');
+          await db.execute(
+              'ALTER TABLE hourly_reports ADD COLUMN shift TEXT');
         }
       },
     );

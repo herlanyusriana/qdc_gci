@@ -48,12 +48,15 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     'Tooling Trouble',
     'Listrik Trouble / Mati Lampu',
     'Maintenance',
+    'Lainnya',
+  ];
+
+  static const _qdcReasons = [
     'Ganti Type',
     'Ganti Material / Reffil Material',
     'Cleaning Machine',
     'Briefing',
     'Trial',
-    'Istirahat',
     'Lainnya',
   ];
 
@@ -233,6 +236,8 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
         'actual': actual,
         'ng': ng,
         'target': targetPerSlot,
+        'operatorName': widget.operatorName,
+        'shift': widget.shift,
         'synced': 0,
       });
     } else {
@@ -242,6 +247,8 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
         target: targetPerSlot,
         actual: actual,
         ng: ng,
+        operatorName: widget.operatorName,
+        shift: widget.shift,
       );
       final newId = await DatabaseService.insertHourlyReport(hr);
       slot.localId = newId;
@@ -287,7 +294,7 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     });
   }
 
-  void _showDowntimeSheet() {
+  void _showReasonSheet(String title, List<String> reasons) {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E293B),
@@ -295,9 +302,9 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) {
         return DraggableScrollableSheet(
-          initialChildSize: 0.6,
+          initialChildSize: 0.5,
           maxChildSize: 0.9,
-          minChildSize: 0.4,
+          minChildSize: 0.3,
           expand: false,
           builder: (_, scrollController) {
             return Column(
@@ -305,15 +312,15 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
                 const SizedBox(height: 12),
                 Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
                 const SizedBox(height: 16),
-                const Text('ALASAN DOWNTIME', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900)),
+                Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 16),
                 Expanded(
                   child: ListView.builder(
                     controller: scrollController,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: _downtimeReasons.length,
+                    itemCount: reasons.length,
                     itemBuilder: (c, i) {
-                      final reason = _downtimeReasons[i];
+                      final reason = reasons[i];
                       return ListTile(
                         leading: _getReasonIcon(reason),
                         title: Text(reason, style: const TextStyle(color: Colors.white)),
@@ -332,6 +339,9 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
       },
     );
   }
+
+  void _showDowntimeSheet() => _showReasonSheet('ALASAN DOWNTIME', _downtimeReasons);
+  void _showQdcSheet() => _showReasonSheet('ALASAN QDC', _qdcReasons);
 
   Icon _getReasonIcon(String reason) {
     IconData icon;
@@ -446,6 +456,76 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
     return total;
   }
 
+  Widget _buildBottomActionBar(bool isDown) {
+    final isIstirahat = _activeDowntime?.reason == 'Istirahat';
+    final isQdc = _activeDowntime != null && _qdcReasons.contains(_activeDowntime!.reason);
+
+    if (isDown) {
+      final String label;
+      final Color bgColor;
+      if (isIstirahat) {
+        label = 'SELESAI ISTIRAHAT';
+        bgColor = const Color(0xFF3B82F6);
+      } else if (isQdc) {
+        label = 'SELESAI QDC — MESIN JALAN';
+        bgColor = const Color(0xFFF59E0B);
+      } else {
+        label = 'SELESAI DOWNTIME — MESIN JALAN';
+        bgColor = Colors.green;
+      }
+
+      return Container(
+        color: isIstirahat ? const Color(0xFF1E3A5F) : isQdc ? const Color(0xFF78350F) : const Color(0xFF7F1D1D),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton.icon(
+            onPressed: _stopDowntime,
+            icon: const Icon(Icons.play_arrow),
+            label: Text(label, style: const TextStyle(fontWeight: FontWeight.w900)),
+            style: ElevatedButton.styleFrom(backgroundColor: bgColor),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      color: const Color(0xFF0F172A),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ActionButton(
+              label: 'CATAT\nDOWNTIME',
+              icon: Icons.warning_amber_rounded,
+              color: const Color(0xFFEF4444),
+              onTap: _showDowntimeSheet,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _ActionButton(
+              label: 'CATAT\nQDC',
+              icon: Icons.swap_horiz,
+              color: const Color(0xFFF59E0B),
+              onTap: _showQdcSheet,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _ActionButton(
+              label: 'ISTIRAHAT',
+              icon: Icons.free_breakfast,
+              color: const Color(0xFF3B82F6),
+              onTap: () => _startDowntime('Istirahat'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDown = _activeDowntime != null;
@@ -474,24 +554,17 @@ class _HourlyInputScreenState extends State<HourlyInputScreen> {
           ),
         ],
       ),
-      floatingActionButton: _wo.isRunning
-          ? FloatingActionButton.extended(
-              onPressed: isDown ? _stopDowntime : _showDowntimeSheet,
-              icon: Icon(isDown ? Icons.play_arrow : Icons.warning_amber_rounded),
-              label: Text(isDown ? 'MESIN JALAN' : 'CATAT DOWNTIME', style: const TextStyle(fontWeight: FontWeight.w900)),
-              backgroundColor: isDown ? Colors.green : Colors.red,
-            )
-          : null,
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       body: Column(
         children: [
+          if (_wo.isRunning)
+            _buildBottomActionBar(isDown),
           if (isDown)
             Container(
               width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-              color: _activeDowntime?.reason == 'Istirahat' ? Colors.blue : Colors.red,
+              color: _activeDowntime?.reason == 'Istirahat' ? Colors.blue : _qdcReasons.contains(_activeDowntime?.reason) ? const Color(0xFFF59E0B) : Colors.red,
               child: Row(
                 children: [
-                  Icon(_activeDowntime?.reason == 'Istirahat' ? Icons.free_breakfast : Icons.warning, color: Colors.white, size: 20),
+                  Icon(_activeDowntime?.reason == 'Istirahat' ? Icons.free_breakfast : _qdcReasons.contains(_activeDowntime?.reason) ? Icons.swap_horiz : Icons.warning, color: Colors.white, size: 20),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -642,6 +715,37 @@ class _SummaryTile extends StatelessWidget {
         Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10)),
         Text(value, style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+  const _ActionButton({required this.label, required this.icon, required this.color, required this.onTap});
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withValues(alpha: 0.15),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(border: Border.all(color: color.withValues(alpha: 0.5)), borderRadius: BorderRadius.circular(12)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: color, size: 22),
+              const SizedBox(height: 4),
+              Text(label, textAlign: TextAlign.center, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w900)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

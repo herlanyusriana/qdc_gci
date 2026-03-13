@@ -5,6 +5,8 @@ class HourlyReport {
   final int target;
   final int actual;
   final int ng;
+  final String? operatorName;
+  final String? shift;
   final bool synced;
 
   HourlyReport({
@@ -14,6 +16,8 @@ class HourlyReport {
     required this.target,
     required this.actual,
     required this.ng,
+    this.operatorName,
+    this.shift,
     this.synced = false,
   });
 
@@ -24,6 +28,8 @@ class HourlyReport {
         'target': target,
         'actual': actual,
         'ng': ng,
+        'operatorName': operatorName,
+        'shift': shift,
         'synced': synced ? 1 : 0,
       };
 
@@ -34,6 +40,8 @@ class HourlyReport {
         target: m['target'] as int? ?? 0,
         actual: m['actual'] as int? ?? 0,
         ng: m['ng'] as int? ?? 0,
+        operatorName: m['operatorName'] as String?,
+        shift: m['shift'] as String?,
         synced: (m['synced'] as int?) == 1,
       );
 
@@ -44,5 +52,7 @@ class HourlyReport {
         'target': target,
         'actual': actual,
         'ng': ng,
+        'operatorName': operatorName,
+        'shift': shift,
       };
 }
